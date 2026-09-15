@@ -99,6 +99,19 @@ function keyOf(dateIso, fascia, corsia) {
   return dateIso + "|" + fascia + "|" + corsia;
 }
 
+// Lista clienti privati di una cella (i nomi sono salvati separati da " || ")
+function clientiDi(cell) {
+  if (!cell || cell.tipo !== "privato" || !cell.cliente) return [];
+  return cell.cliente.split(" || ").filter((x) => x.trim());
+}
+// Etichetta compatta per la cella: "Rossi" (1) o "3 privati" (molti)
+function etichettaPrivati(cell) {
+  const l = clientiDi(cell);
+  if (l.length === 0) return "Cliente privato";
+  if (l.length === 1) return l[0];
+  return l.length + " privati";
+}
+
 // ── Schermata di accesso ──────────────────────────────────────
 function Login({ onEntra }) {
   const [pwd, setPwd] = useState("");
@@ -149,7 +162,8 @@ export default function App() {
   const [sel, setSel] = useState(null);
   const [tipo, setTipo] = useState("libero");
   const [nota, setNota] = useState("");
-  const [cliente, setCliente] = useState("");        // nome cliente (tipo privato)
+  const [cliente, setCliente] = useState("");        // nome cliente in digitazione
+  const [clientiLista, setClientiLista] = useState([]); // lista clienti privati nella cella
   const [oraInizio, setOraInizio] = useState("");   // "hh:mm" della prenotazione
   const [oraFine, setOraFine] = useState("");       // "hh:mm" della prenotazione
   const [presets, setPresets] = useState([]);       // [{nome, corsie:[...]}]
@@ -278,7 +292,13 @@ export default function App() {
     // Lo staff parte sempre dal tipo "privato" (l'unico che può usare)
     setTipo(e ? e.tipo : (isAdmin ? "libero" : "privato"));
     setNota(e ? e.nota || "" : "");
-    setCliente(e ? e.cliente || "" : "");
+    // Lista clienti privati (i nomi sono salvati separati da " || ")
+    if (e && e.tipo === "privato" && e.cliente) {
+      setClientiLista(e.cliente.split(" || ").filter((x) => x.trim()));
+    } else {
+      setClientiLista([]);
+    }
+    setCliente("");
     // precompilo inizio = fascia toccata, fine = fascia + una durata slot
     const iniz = e && e.oraInizio ? e.oraInizio : fascia;
     let fin;
@@ -301,6 +321,15 @@ export default function App() {
   };
   const setCorsieSel = (arr) => setSel((s) => s ? { ...s, corsie: [...arr].sort((a,b)=>a-b) } : s);
 
+  // Aggiunge il nome digitato alla lista clienti privati
+  const aggiungiCliente = () => {
+    const n = cliente.trim();
+    if (!n) return;
+    setClientiLista((l) => l.includes(n) ? l : [...l, n]);
+    setCliente("");
+  };
+  const rimuoviCliente = (n) => setClientiLista((l) => l.filter((x) => x !== n));
+
   const salva = () => {
     if (!sel || !sel.corsie.length) return;
     // Permesso: lo staff può salvare solo clienti privati
@@ -308,8 +337,13 @@ export default function App() {
       alert("Come staff puoi inserire solo i clienti privati.\nSeleziona il tipo « Cliente privato ».");
       return;
     }
-    if (tipo === "privato" && !cliente.trim()) {
-      alert("Inserisci il nome del cliente privato."); return;
+    // Per i privati: includo anche un eventuale nome ancora nella casella di testo
+    let listaFinale = clientiLista;
+    if (tipo === "privato" && cliente.trim() && !listaFinale.includes(cliente.trim())) {
+      listaFinale = [...listaFinale, cliente.trim()];
+    }
+    if (tipo === "privato" && listaFinale.length === 0) {
+      alert("Aggiungi almeno un cliente privato."); return;
     }
     const iniMin = hhmmToMin(oraInizio);
     const finMin = hhmmToMin(oraFine);
@@ -322,7 +356,7 @@ export default function App() {
         celle.push({
           id: keyOf(sel.dateIso, f, c), data_iso: sel.dateIso, fascia: f, corsia: c,
           tipo, nota: nota.trim(), ora_inizio: oraInizio, ora_fine: oraFine,
-          cliente: tipo === "privato" ? cliente.trim() : "",
+          cliente: tipo === "privato" ? listaFinale.join(" || ") : "",
         });
       });
     });
@@ -810,10 +844,27 @@ export default function App() {
             ))}
           </div>
 
-          {/* Nome cliente (solo per tipo Cliente privato) */}
+          {/* Clienti privati (lista, solo per tipo Cliente privato) */}
           {tipo === "privato" && (
-            <input value={cliente} onChange={(e) => setCliente(e.target.value)}
-              placeholder="Nome del cliente privato" style={{ ...S.input, marginBottom: 8, borderColor: "#1D6F42" }} />
+            <div style={S.clientiBlock}>
+              <label style={S.orarioLbl}>Clienti privati in questa corsia</label>
+              {clientiLista.length > 0 && (
+                <div style={S.clientiChips}>
+                  {clientiLista.map((n) => (
+                    <span key={n} style={S.clienteChip}>
+                      {n}
+                      <button onClick={() => rimuoviCliente(n)} style={S.clienteDel} aria-label={"Togli " + n}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div style={S.clienteAdd}>
+                <input value={cliente} onChange={(e) => setCliente(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") aggiungiCliente(); }}
+                  placeholder="Nome cliente + Invio" style={{ ...S.input, marginBottom: 0, borderColor: "#1D6F42" }} />
+                <button onClick={aggiungiCliente} style={S.clienteAddBtn}>+ Aggiungi</button>
+              </div>
+            </div>
           )}
 
           {/* Orario della prenotazione */}
@@ -897,7 +948,7 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                         title={cell ? (
                           (cell.oraInizio ? cell.oraInizio + "–" + cell.oraFine + " · " : "") +
                           t.label +
-                          (cell.tipo === "privato" && cell.cliente ? " · " + cell.cliente : "") +
+                          (cell.tipo === "privato" ? " · " + clientiDi(cell).join(", ") : "") +
                           (cell.tipo !== "privato" && cell.nota ? " · " + cell.nota : "")
                         ) : "Libera"}
                         style={{ ...S.slot, height: slotH,
@@ -907,12 +958,12 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                           boxShadow: isSel ? "0 0 0 2px #0B1A22" : "none" }}>
                         {t ? (
                           <>
-                            <span style={S.slotTop}>{cell.tipo === "privato" && cell.cliente ? cell.cliente : t.label}</span>
+                            <span style={S.slotTop}>{cell.tipo === "privato" ? etichettaPrivati(cell) : t.label}</span>
                             {cell.oraInizio && slotH >= 44 && (
                               <span style={S.slotOra}>{cell.oraInizio}–{cell.oraFine}</span>
                             )}
-                            {cell.tipo === "privato" && cell.cliente && slotH >= 52 && (
-                              <span style={S.slotNota}>Privato</span>
+                            {cell.tipo === "privato" && clientiDi(cell).length > 1 && slotH >= 52 && (
+                              <span style={S.slotNota}>{clientiDi(cell).length} clienti</span>
                             )}
                             {cell.tipo !== "privato" && cell.nota && slotH >= 52 && <span style={S.slotNota}>{cell.nota}</span>}
                           </>
@@ -1154,6 +1205,7 @@ function barColor(p){return p<.34?"#9CC7D8":p<.67?"#4E9BB5":"#1E6E8C";}
 function occInData(di){return Object.keys(DATI).filter(k=>k.indexOf(di+"|")===0).length;}
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function etichettaPriv(cell){if(!cell.cliente)return"Cliente privato";const l=cell.cliente.split(" || ").filter(x=>x.trim());return l.length<=1?(l[0]||"Cliente privato"):l.length+" privati";}
 
 function render(){
   document.getElementById("sub").textContent="Calendario generato il "+P.generatoIl+" · aggiornamento statico";
@@ -1193,7 +1245,7 @@ function viewGiorno(F){
       const cell=DATI[keyOf(di,f,c)];
       if(cell){const t=TIPI[cell.tipo];
         h+='<td class="cell"><div class="slot" style="height:'+slotH+'px;background:'+t.bg+';color:'+t.ink+';border-color:'+t.bg+'">'
-          +'<span class="lbl">'+esc(cell.tipo==="privato"&&cell.cliente?cell.cliente:t.label)+'</span>'
+          +'<span class="lbl">'+esc(cell.tipo==="privato"?etichettaPriv(cell):t.label)+'</span>'
           +(cell.oraInizio&&slotH>=44?'<span class="ora2">'+esc(cell.oraInizio)+'–'+esc(cell.oraFine)+'</span>':'')
           +(cell.nota&&slotH>=52?'<span class="nota">'+esc(cell.nota)+'</span>':'')
           +'</div></td>';
@@ -1335,6 +1387,12 @@ const S = {
   orarioRow: { display: "flex", gap: 10, marginBottom: 8 },
   orarioLbl: { display: "block", fontSize: 11, fontWeight: 700, color: "#0B1A22", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" },
   orarioInfo: { fontSize: 12, color: "#0B4A5E", background: "#EAF4F7", border: "1px solid #CFE4EC", borderRadius: 8, padding: "6px 10px", marginBottom: 12, fontWeight: 600 },
+  clientiBlock: { marginBottom: 10, padding: "10px 12px", background: "#EEF7F1", border: "1px solid #CDE7D8", borderRadius: 10 },
+  clientiChips: { display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0" },
+  clienteChip: { display: "inline-flex", alignItems: "center", gap: 4, background: "#1D6F42", color: "#fff", borderRadius: 999, padding: "4px 6px 4px 12px", fontSize: 12.5, fontWeight: 600 },
+  clienteDel: { width: 18, height: 18, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.25)", color: "#fff", cursor: "pointer", fontSize: 13, lineHeight: 1 },
+  clienteAdd: { display: "flex", gap: 6, alignItems: "stretch" },
+  clienteAddBtn: { padding: "8px 12px", background: "#1D6F42", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12.5, whiteSpace: "nowrap" },
   panelBtns: { display: "flex", gap: 8 },
   save: { flex: 1, padding: "11px", background: "#0B1A22", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 14 },
   clear: { padding: "11px 16px", background: "#fff", color: "#C7511F", border: "1px solid #E7C3B4", borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 14 },
