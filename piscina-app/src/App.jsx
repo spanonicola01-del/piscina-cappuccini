@@ -216,7 +216,11 @@ export default function App() {
 
     const caricaTutto = async () => {
       setSincro("carico…");
-      const { data, error } = await supabase.from("prenotazioni").select("*");
+      const { data, error } = await supabase
+        .from("prenotazioni")
+        .select("*")
+        .order("data_iso", { ascending: true })
+        .limit(100000);
       if (!attivo) return;
       if (error) { setSincro("errore di connessione"); setCaricato(true); return; }
       const map = {};
