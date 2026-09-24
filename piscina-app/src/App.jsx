@@ -1,4 +1,4 @@
-IyRKeb0HGsb*2PiT2E#&*&VIimport React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase.js";
 
 // Preferenze personali del dispositivo (durata slot, preset corsie) → restano locali.
@@ -190,7 +190,9 @@ export default function App() {
     oraA: "19:00",
     giorni: [0, 2, 4],       // indici GIORNI: Lun, Mer, Ven
     nota: "",
+    nomi: [],                // lista nomi per privato/convenzione
   });
+  const [progNome, setProgNome] = useState(""); // nome in digitazione
 
   // Le fasce dipendono dalla durata scelta
   const FASCE = useMemo(() => generaFasce(durata), [durata]);
@@ -514,6 +516,14 @@ export default function App() {
     if (!prog.corsie.length) { alert("Seleziona almeno una corsia."); return; }
     if (!prog.giorni.length) { alert("Seleziona almeno un giorno della settimana."); return; }
     if (prog.oraDa >= prog.oraA) { alert("L'ora di fine deve essere dopo l'ora di inizio."); return; }
+    // Per privato/convenzione serve almeno un nome (includo quello ancora in digitazione)
+    let nomiFinali = prog.nomi;
+    if (isMultiplo(prog.tipo) && progNome.trim() && !nomiFinali.includes(progNome.trim())) {
+      nomiFinali = [...nomiFinali, progNome.trim()];
+    }
+    if (isMultiplo(prog.tipo) && nomiFinali.length === 0) {
+      alert("Aggiungi almeno un nome per la programmazione."); return;
+    }
 
     const { target, fasceInRange, giorniConteggio } = calcolaTargetProg();
     if (!target.length) {
@@ -544,18 +554,27 @@ export default function App() {
     );
     if (!conferma) return;
 
+    const clientiStr = isMultiplo(prog.tipo) ? nomiFinali.join(" || ") : "";
     // Ricostruisco i record dal loro id (data|fascia|corsia)
     const celle = daScrivere.map((k) => {
       const [data_iso, fascia, corsia] = k.split("|");
       return {
         id: k, data_iso, fascia, corsia: Number(corsia),
         tipo: prog.tipo, nota: prog.nota.trim(),
-        ora_inizio: prog.oraDa, ora_fine: prog.oraA, cliente: "",
+        ora_inizio: prog.oraDa, ora_fine: prog.oraA, cliente: clientiStr,
       };
     });
     scriviCelle(celle);
     setProgOpen(false);
   };
+  // Nomi nella programmazione ricorrente
+  const aggiungiProgNome = () => {
+    const n = progNome.trim();
+    if (!n) return;
+    setProg((p) => ({ ...p, nomi: p.nomi.includes(n) ? p.nomi : [...p.nomi, n] }));
+    setProgNome("");
+  };
+  const rimuoviProgNome = (n) => setProg((p) => ({ ...p, nomi: p.nomi.filter((x) => x !== n) }));
 
   const setProgCorsie = (arr) => setProg((p) => ({ ...p, corsie: [...arr].sort((a,b)=>a-b) }));
   const toggleProgCorsia = (c) => setProg((p) => {
@@ -692,6 +711,32 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            {/* Lista nomi (per Cliente privato e Convenzione) */}
+            {isMultiplo(prog.tipo) && (
+              <div style={S.campo}>
+                <label style={S.campoLbl}>
+                  {prog.tipo === "convenzione" ? "Con chi (convenzioni)" : "Clienti privati"}
+                </label>
+                {prog.nomi.length > 0 && (
+                  <div style={S.clientiChips}>
+                    {prog.nomi.map((n) => (
+                      <span key={n} style={S.clienteChip}>
+                        {n}
+                        <button onClick={() => rimuoviProgNome(n)} style={S.clienteDel} aria-label={"Togli " + n}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={S.clienteAdd}>
+                  <input value={progNome} onChange={(e) => setProgNome(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") aggiungiProgNome(); }}
+                    placeholder={prog.tipo === "convenzione" ? "Nome convenzione + Invio" : "Nome cliente + Invio"}
+                    style={{ ...S.input, marginBottom: 0, borderColor: "#1D6F42" }} />
+                  <button onClick={aggiungiProgNome} style={S.clienteAddBtn}>+ Aggiungi</button>
+                </div>
+              </div>
+            )}
 
             {/* Corsie */}
             <div style={S.campo}>
