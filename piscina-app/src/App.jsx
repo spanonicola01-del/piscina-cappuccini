@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+IyRKeb0HGsb*2PiT2E#&*&VIimport React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase.js";
 
 // Preferenze personali del dispositivo (durata slot, preset corsie) → restano locali.
@@ -75,6 +75,7 @@ const TIPI = {
   acquagym: { label: "Acquagym",      bg: "#6A3D9A", ink: "#F0E9F7" },
   evento:   { label: "Evento",        bg: "#B8860B", ink: "#FBF3DC" },
   privato:  { label: "Cliente privato", bg: "#1D6F42", ink: "#E5F3EB" },
+  convenzione: { label: "Convenzione", bg: "#2A5D8F", ink: "#E4EFF8" },
   manutenz: { label: "Manutenzione",  bg: "#4A4A55", ink: "#E8E8EE" },
 };
 
@@ -99,17 +100,23 @@ function keyOf(dateIso, fascia, corsia) {
   return dateIso + "|" + fascia + "|" + corsia;
 }
 
-// Lista clienti privati di una cella (i nomi sono salvati separati da " || ")
+// Tipi che gestiscono una LISTA di nomi nella stessa cella
+function isMultiplo(tipo) {
+  return tipo === "privato" || tipo === "convenzione";
+}
+// Lista nomi di una cella (i nomi sono salvati separati da " || ")
 function clientiDi(cell) {
-  if (!cell || cell.tipo !== "privato" || !cell.cliente) return [];
+  if (!cell || !isMultiplo(cell.tipo) || !cell.cliente) return [];
   return cell.cliente.split(" || ").filter((x) => x.trim());
 }
-// Etichetta compatta per la cella: "Rossi" (1) o "3 privati" (molti)
+// Etichetta compatta per la cella: "Rossi" (1) o "3 nomi" (molti)
 function etichettaPrivati(cell) {
   const l = clientiDi(cell);
-  if (l.length === 0) return "Cliente privato";
+  const singolare = cell && cell.tipo === "convenzione" ? "Convenzione" : "Cliente privato";
+  const plurale = cell && cell.tipo === "convenzione" ? " convenzioni" : " privati";
+  if (l.length === 0) return singolare;
   if (l.length === 1) return l[0];
-  return l.length + " privati";
+  return l.length + plurale;
 }
 
 // ── Schermata di accesso ──────────────────────────────────────
@@ -297,7 +304,7 @@ export default function App() {
     setTipo(e ? e.tipo : (isAdmin ? "libero" : "privato"));
     setNota(e ? e.nota || "" : "");
     // Lista clienti privati (i nomi sono salvati separati da " || ")
-    if (e && e.tipo === "privato" && e.cliente) {
+    if (e && isMultiplo(e.tipo) && e.cliente) {
       setClientiLista(e.cliente.split(" || ").filter((x) => x.trim()));
     } else {
       setClientiLista([]);
@@ -341,13 +348,13 @@ export default function App() {
       alert("Come staff puoi inserire solo i clienti privati.\nSeleziona il tipo « Cliente privato ».");
       return;
     }
-    // Per i privati: includo anche un eventuale nome ancora nella casella di testo
+    // Per privato/convenzione: includo anche un eventuale nome ancora nella casella di testo
     let listaFinale = clientiLista;
-    if (tipo === "privato" && cliente.trim() && !listaFinale.includes(cliente.trim())) {
+    if (isMultiplo(tipo) && cliente.trim() && !listaFinale.includes(cliente.trim())) {
       listaFinale = [...listaFinale, cliente.trim()];
     }
-    if (tipo === "privato" && listaFinale.length === 0) {
-      alert("Aggiungi almeno un cliente privato."); return;
+    if (isMultiplo(tipo) && listaFinale.length === 0) {
+      alert("Aggiungi almeno un nome."); return;
     }
     const iniMin = hhmmToMin(oraInizio);
     const finMin = hhmmToMin(oraFine);
@@ -360,7 +367,7 @@ export default function App() {
         celle.push({
           id: keyOf(sel.dateIso, f, c), data_iso: sel.dateIso, fascia: f, corsia: c,
           tipo, nota: nota.trim(), ora_inizio: oraInizio, ora_fine: oraFine,
-          cliente: tipo === "privato" ? listaFinale.join(" || ") : "",
+          cliente: isMultiplo(tipo) ? listaFinale.join(" || ") : "",
         });
       });
     });
@@ -848,10 +855,12 @@ export default function App() {
             ))}
           </div>
 
-          {/* Clienti privati (lista, solo per tipo Cliente privato) */}
-          {tipo === "privato" && (
+          {/* Lista nomi (per Cliente privato e Convenzione) */}
+          {isMultiplo(tipo) && (
             <div style={S.clientiBlock}>
-              <label style={S.orarioLbl}>Clienti privati in questa corsia</label>
+              <label style={S.orarioLbl}>
+                {tipo === "convenzione" ? "Con chi (convenzioni) in questa corsia" : "Clienti privati in questa corsia"}
+              </label>
               {clientiLista.length > 0 && (
                 <div style={S.clientiChips}>
                   {clientiLista.map((n) => (
@@ -865,7 +874,8 @@ export default function App() {
               <div style={S.clienteAdd}>
                 <input value={cliente} onChange={(e) => setCliente(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") aggiungiCliente(); }}
-                  placeholder="Nome cliente + Invio" style={{ ...S.input, marginBottom: 0, borderColor: "#1D6F42" }} />
+                  placeholder={tipo === "convenzione" ? "Nome convenzione + Invio" : "Nome cliente + Invio"}
+                  style={{ ...S.input, marginBottom: 0, borderColor: "#1D6F42" }} />
                 <button onClick={aggiungiCliente} style={S.clienteAddBtn}>+ Aggiungi</button>
               </div>
             </div>
@@ -952,8 +962,8 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                         title={cell ? (
                           (cell.oraInizio ? cell.oraInizio + "–" + cell.oraFine + " · " : "") +
                           t.label +
-                          (cell.tipo === "privato" ? " · " + clientiDi(cell).join(", ") : "") +
-                          (cell.tipo !== "privato" && cell.nota ? " · " + cell.nota : "")
+                          (isMultiplo(cell.tipo) ? " · " + clientiDi(cell).join(", ") : "") +
+                          (!isMultiplo(cell.tipo) && cell.nota ? " · " + cell.nota : "")
                         ) : "Libera"}
                         style={{ ...S.slot, height: slotH,
                           background: t ? t.bg : "transparent",
@@ -962,14 +972,14 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                           boxShadow: isSel ? "0 0 0 2px #0B1A22" : "none" }}>
                         {t ? (
                           <>
-                            <span style={S.slotTop}>{cell.tipo === "privato" ? etichettaPrivati(cell) : t.label}</span>
+                            <span style={S.slotTop}>{isMultiplo(cell.tipo) ? etichettaPrivati(cell) : t.label}</span>
                             {cell.oraInizio && slotH >= 44 && (
                               <span style={S.slotOra}>{cell.oraInizio}–{cell.oraFine}</span>
                             )}
-                            {cell.tipo === "privato" && clientiDi(cell).length > 1 && slotH >= 52 && (
-                              <span style={S.slotNota}>{clientiDi(cell).length} clienti</span>
+                            {isMultiplo(cell.tipo) && clientiDi(cell).length > 1 && slotH >= 52 && (
+                              <span style={S.slotNota}>{clientiDi(cell).length} {cell.tipo === "convenzione" ? "conv." : "clienti"}</span>
                             )}
-                            {cell.tipo !== "privato" && cell.nota && slotH >= 52 && <span style={S.slotNota}>{cell.nota}</span>}
+                            {!isMultiplo(cell.tipo) && cell.nota && slotH >= 52 && <span style={S.slotNota}>{cell.nota}</span>}
                           </>
                         ) : <span style={S.slotFree}>+</span>}
                       </button>
@@ -1209,7 +1219,8 @@ function barColor(p){return p<.34?"#9CC7D8":p<.67?"#4E9BB5":"#1E6E8C";}
 function occInData(di){return Object.keys(DATI).filter(k=>k.indexOf(di+"|")===0).length;}
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
-function etichettaPriv(cell){if(!cell.cliente)return"Cliente privato";const l=cell.cliente.split(" || ").filter(x=>x.trim());return l.length<=1?(l[0]||"Cliente privato"):l.length+" privati";}
+function isMult(t){return t==="privato"||t==="convenzione";}
+function etichettaPriv(cell){const sing=cell.tipo==="convenzione"?"Convenzione":"Cliente privato";if(!cell.cliente)return sing;const l=cell.cliente.split(" || ").filter(x=>x.trim());return l.length<=1?(l[0]||sing):l.length+(cell.tipo==="convenzione"?" convenzioni":" privati");}
 
 function render(){
   document.getElementById("sub").textContent="Calendario generato il "+P.generatoIl+" · aggiornamento statico";
@@ -1249,7 +1260,7 @@ function viewGiorno(F){
       const cell=DATI[keyOf(di,f,c)];
       if(cell){const t=TIPI[cell.tipo];
         h+='<td class="cell"><div class="slot" style="height:'+slotH+'px;background:'+t.bg+';color:'+t.ink+';border-color:'+t.bg+'">'
-          +'<span class="lbl">'+esc(cell.tipo==="privato"?etichettaPriv(cell):t.label)+'</span>'
+          +'<span class="lbl">'+esc(isMult(cell.tipo)?etichettaPriv(cell):t.label)+'</span>'
           +(cell.oraInizio&&slotH>=44?'<span class="ora2">'+esc(cell.oraInizio)+'–'+esc(cell.oraFine)+'</span>':'')
           +(cell.nota&&slotH>=52?'<span class="nota">'+esc(cell.nota)+'</span>':'')
           +'</div></td>';
