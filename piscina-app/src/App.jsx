@@ -191,8 +191,10 @@ export default function App() {
     giorni: [0, 2, 4],       // indici GIORNI: Lun, Mer, Ven
     nota: "",
     nomi: [],                // lista nomi per privato/convenzione
+    dateExtra: [],           // date singole aggiuntive (YYYY-MM-DD)
   });
   const [progNome, setProgNome] = useState(""); // nome in digitazione
+  const [progDataExtra, setProgDataExtra] = useState(""); // data extra in digitazione
 
   // Le fasce dipendono dalla durata scelta
   const FASCE = useMemo(() => generaFasce(durata), [durata]);
@@ -493,28 +495,38 @@ export default function App() {
     const fasceDurata = generaFasce(durata);
     // fasce comprese nell'intervallo orario [oraDa, oraA)
     const fasceInRange = fasceDurata.filter((f) => f >= prog.oraDa && f < prog.oraA);
-    const target = [];
-    let d = new Date(prog.dal + "T12:00:00");
-    const fine = new Date(prog.al + "T12:00:00");
-    if (isNaN(d) || isNaN(fine) || d > fine) return { target: [], fasceInRange, giorniConteggio: 0 };
+    // Raccolgo le date da usare: intervallo (filtrato per giorni) + date extra
+    const dateUsate = new Set();
     let giorniConteggio = 0;
-    while (d <= fine) {
-      const idxGiorno = (d.getDay() + 6) % 7;   // 0 = Lun
-      if (prog.giorni.includes(idxGiorno)) {
-        giorniConteggio++;
-        const dIso = iso(d);
-        fasceInRange.forEach((f) => {
-          prog.corsie.forEach((c) => target.push(keyOf(dIso, f, c)));
-        });
+    const d0 = new Date(prog.dal + "T12:00:00");
+    const fine = new Date(prog.al + "T12:00:00");
+    if (!isNaN(d0) && !isNaN(fine) && d0 <= fine && prog.giorni.length) {
+      let d = d0;
+      while (d <= fine) {
+        const idxGiorno = (d.getDay() + 6) % 7;   // 0 = Lun
+        if (prog.giorni.includes(idxGiorno)) { dateUsate.add(iso(d)); giorniConteggio++; }
+        d = addDays(d, 1);
       }
-      d = addDays(d, 1);
     }
+    // Date extra (aggiunte a mano) sempre incluse, senza filtro giorni
+    (prog.dateExtra || []).forEach((ds) => {
+      if (ds && !dateUsate.has(ds)) { dateUsate.add(ds); giorniConteggio++; }
+    });
+    const target = [];
+    dateUsate.forEach((dIso) => {
+      fasceInRange.forEach((f) => {
+        prog.corsie.forEach((c) => target.push(keyOf(dIso, f, c)));
+      });
+    });
     return { target, fasceInRange, giorniConteggio };
   };
 
   const applicaProg = () => {
     if (!prog.corsie.length) { alert("Seleziona almeno una corsia."); return; }
-    if (!prog.giorni.length) { alert("Seleziona almeno un giorno della settimana."); return; }
+    const haDateExtra = (prog.dateExtra || []).length > 0;
+    if (!prog.giorni.length && !haDateExtra) {
+      alert("Seleziona almeno un giorno della settimana, oppure aggiungi una data specifica."); return;
+    }
     if (prog.oraDa >= prog.oraA) { alert("L'ora di fine deve essere dopo l'ora di inizio."); return; }
     // Per privato/convenzione serve almeno un nome (includo quello ancora in digitazione)
     let nomiFinali = prog.nomi;
@@ -575,6 +587,14 @@ export default function App() {
     setProgNome("");
   };
   const rimuoviProgNome = (n) => setProg((p) => ({ ...p, nomi: p.nomi.filter((x) => x !== n) }));
+  // Date extra nella programmazione ricorrente
+  const aggiungiDataExtra = () => {
+    const ds = progDataExtra;
+    if (!ds) return;
+    setProg((p) => ({ ...p, dateExtra: p.dateExtra.includes(ds) ? p.dateExtra : [...p.dateExtra, ds].sort() }));
+    setProgDataExtra("");
+  };
+  const rimuoviDataExtra = (ds) => setProg((p) => ({ ...p, dateExtra: p.dateExtra.filter((x) => x !== ds) }));
 
   const setProgCorsie = (arr) => setProg((p) => ({ ...p, corsie: [...arr].sort((a,b)=>a-b) }));
   const toggleProgCorsia = (c) => setProg((p) => {
@@ -786,6 +806,29 @@ export default function App() {
                 <label style={S.campoLbl}>Al giorno</label>
                 <input type="date" value={prog.al}
                   onChange={(e) => setProg((p) => ({ ...p, al: e.target.value }))} style={S.inputTime} />
+              </div>
+            </div>
+
+            {/* Date singole extra */}
+            <div style={S.campo}>
+              <label style={S.campoLbl}>Date specifiche extra (facoltative)</label>
+              {prog.dateExtra.length > 0 && (
+                <div style={S.clientiChips}>
+                  {prog.dateExtra.map((ds) => (
+                    <span key={ds} style={{ ...S.clienteChip, background: "#2A5D8F" }}>
+                      {ds.split("-").reverse().join("/")}
+                      <button onClick={() => rimuoviDataExtra(ds)} style={S.clienteDel} aria-label={"Togli " + ds}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div style={S.clienteAdd}>
+                <input type="date" value={progDataExtra}
+                  onChange={(e) => setProgDataExtra(e.target.value)} style={{ ...S.inputTime, marginBottom: 0 }} />
+                <button onClick={aggiungiDataExtra} style={{ ...S.clienteAddBtn, background: "#2A5D8F" }}>+ Aggiungi data</button>
+              </div>
+              <div style={{ fontSize: 11, color: "#5B6970", marginTop: 4 }}>
+                Le date extra vengono incluse anche se non rientrano nei giorni della settimana spuntati.
               </div>
             </div>
 
