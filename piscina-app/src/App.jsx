@@ -236,14 +236,20 @@ export default function App() {
           .order("data_iso", { ascending: true })
           .limit(100000);
         if (!attivo) return;
-        if (error) { setSincro("errore di connessione"); setCaricato(true); return; }
+        if (error) { setSincro(primo ? "errore di connessione" : "sincronizzato"); setCaricato(true); return; }
+        const righe = data || [];
         const map = {};
-        (data || []).forEach((r) => { map[r.id] = rigaToCell(r); });
-        setDati(map);
+        righe.forEach((r) => { map[r.id] = rigaToCell(r); });
+        // Protezione: se una rilettura periodica torna VUOTA ma prima avevamo dati,
+        // NON sovrascrivo (probabile problema di rete temporaneo che svuoterebbe la griglia).
+        setDati((prev) => {
+          if (!primo && righe.length === 0 && Object.keys(prev).length > 0) return prev;
+          return map;
+        });
         setCaricato(true);
-        setSincro("sincronizzato");
+        setSincro("sincronizzato (" + righe.length + ")");
       } catch (_) {
-        if (attivo) { setSincro("errore di connessione"); setCaricato(true); }
+        if (attivo) { setSincro(primo ? "errore di connessione" : "sincronizzato"); setCaricato(true); }
       }
     };
     caricaTutto(true);
