@@ -230,18 +230,28 @@ export default function App() {
     const caricaTutto = async (primo) => {
       if (primo) setSincro("carico…");
       try {
-        const { data, error } = await supabase
-          .from("prenotazioni")
-          .select("*")
-          .order("data_iso", { ascending: true })
-          .limit(100000);
+        // Supabase restituisce max 1000 righe per richiesta: carico a blocchi (paginazione)
+        let righe = [];
+        let da = 0;
+        const blocco = 1000;
+        while (true) {
+          const { data, error } = await supabase
+            .from("prenotazioni")
+            .select("*")
+            .order("data_iso", { ascending: true })
+            .range(da, da + blocco - 1);
+          if (error) throw error;
+          const parte = data || [];
+          righe = righe.concat(parte);
+          if (parte.length < blocco) break;   // ultimo blocco
+          da += blocco;
+          if (da > 200000) break;             // sicurezza
+        }
         if (!attivo) return;
-        if (error) { setSincro(primo ? "errore di connessione" : "sincronizzato"); setCaricato(true); return; }
-        const righe = data || [];
         const map = {};
         righe.forEach((r) => { map[r.id] = rigaToCell(r); });
         // Protezione: se una rilettura periodica torna VUOTA ma prima avevamo dati,
-        // NON sovrascrivo (probabile problema di rete temporaneo che svuoterebbe la griglia).
+        // NON sovrascrivo (probabile problema di rete temporaneo).
         setDati((prev) => {
           if (!primo && righe.length === 0 && Object.keys(prev).length > 0) return prev;
           return map;
