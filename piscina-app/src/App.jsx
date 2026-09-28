@@ -220,42 +220,64 @@ export default function App() {
     })();
   }, []);
 
-  // Carica le prenotazioni dal database condiviso + sottoscrizione realtime
+  // Carica le prenotazioni dal database condiviso.
+  // Il caricamento è INDIPENDENTE dal realtime: anche se il tempo reale non
+  // funziona, i dati vengono letti (all'avvio, ogni 15s, e al ritorno in primo piano).
   useEffect(() => {
     if (!ruolo) return;   // carica solo dopo il login
     let attivo = true;
 
-    const caricaTutto = async () => {
-      setSincro("carico…");
-      const { data, error } = await supabase
-        .from("prenotazioni")
-        .select("*")
-        .order("data_iso", { ascending: true })
-        .limit(100000);
-      if (!attivo) return;
-      if (error) { setSincro("errore di connessione"); setCaricato(true); return; }
-      const map = {};
-      (data || []).forEach((r) => { map[r.id] = rigaToCell(r); });
-      setDati(map);
-      setCaricato(true);
-      setSincro("sincronizzato");
+    const caricaTutto = async (primo) => {
+      if (primo) setSincro("carico…");
+      try {
+        const { data, error } = await supabase
+          .from("prenotazioni")
+          .select("*")
+          .order("data_iso", { ascending: true })
+          .limit(100000);
+        if (!attivo) return;
+        if (error) { setSincro("errore di connessione"); setCaricato(true); return; }
+        const map = {};
+        (data || []).forEach((r) => { map[r.id] = rigaToCell(r); });
+        setDati(map);
+        setCaricato(true);
+        setSincro("sincronizzato");
+      } catch (_) {
+        if (attivo) { setSincro("errore di connessione"); setCaricato(true); }
+      }
     };
-    caricaTutto();
+    caricaTutto(true);
 
-    // Sincronizzazione in tempo reale: ogni modifica di chiunque aggiorna la griglia
-    const canale = supabase
-      .channel("prenotazioni-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "prenotazioni" }, (payload) => {
-        setDati((prev) => {
-          const n = { ...prev };
-          if (payload.eventType === "DELETE") { delete n[payload.old.id]; }
-          else { const r = payload.new; n[r.id] = rigaToCell(r); }
-          return n;
-        });
-      })
-      .subscribe();
+    // Rete di sicurezza: ricarico dal database ogni 15 secondi.
+    // Garantisce che i dati restino e si sincronizzino anche senza realtime.
+    const timer = setInterval(() => { if (attivo) caricaTutto(false); }, 15000);
 
-    return () => { attivo = false; supabase.removeChannel(canale); };
+    // Ricarico quando la pagina torna visibile (es. si riapre l'app sul telefono)
+    const onVisible = () => { if (attivo && document.visibilityState === "visible") caricaTutto(false); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    // Sincronizzazione in tempo reale (extra): se fallisce, non tocca il resto.
+    let canale = null;
+    try {
+      canale = supabase
+        .channel("prenotazioni-live")
+        .on("postgres_changes", { event: "*", schema: "public", table: "prenotazioni" }, (payload) => {
+          setDati((prev) => {
+            const n = { ...prev };
+            if (payload.eventType === "DELETE") { delete n[payload.old.id]; }
+            else { const r = payload.new; n[r.id] = rigaToCell(r); }
+            return n;
+          });
+        })
+        .subscribe();
+    } catch (_) { /* realtime non disponibile: il polling copre comunque */ }
+
+    return () => {
+      attivo = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      try { if (canale) supabase.removeChannel(canale); } catch (_) {}
+    };
   }, [ruolo]);
 
   useEffect(() => {
@@ -275,17 +297,29 @@ export default function App() {
       celle.forEach((r) => { n[r.id] = rigaToCell(r); });
       return n;
     });
+    setSincro("salvo…");
     const payload = celle.map((r) => ({ ...r, creato_da: ruolo, aggiornato_il: new Date().toISOString() }));
-    const { error } = await supabase.from("prenotazioni").upsert(payload);
-    if (error) { setSincro("errore salvataggio"); alert("Salvataggio non riuscito. Controlla la connessione."); }
-    else setSincro("sincronizzato");
+    try {
+      const { error } = await supabase.from("prenotazioni").upsert(payload);
+      if (error) { setSincro("errore salvataggio"); alert("Salvataggio non riuscito: " + error.message); }
+      else setSincro("sincronizzato");
+    } catch (e) {
+      setSincro("errore salvataggio");
+      alert("Salvataggio non riuscito. Controlla la connessione a internet.");
+    }
   };
   // Elimina celle per id e aggiorna la UI
   const eliminaCelle = async (ids) => {
     setDati((prev) => { const n = { ...prev }; ids.forEach((id) => delete n[id]); return n; });
-    const { error } = await supabase.from("prenotazioni").delete().in("id", ids);
-    if (error) { setSincro("errore eliminazione"); alert("Eliminazione non riuscita. Controlla la connessione."); }
-    else setSincro("sincronizzato");
+    setSincro("salvo…");
+    try {
+      const { error } = await supabase.from("prenotazioni").delete().in("id", ids);
+      if (error) { setSincro("errore eliminazione"); alert("Eliminazione non riuscita: " + error.message); }
+      else setSincro("sincronizzato");
+    } catch (e) {
+      setSincro("errore eliminazione");
+      alert("Eliminazione non riuscita. Controlla la connessione a internet.");
+    }
   };
 
   const salvaPreset = () => {
@@ -1503,21 +1537,4 @@ const S = {
   btnOff: { opacity: 0.45, cursor: "not-allowed" },
   overlay: { position: "fixed", inset: 0, background: "rgba(11,26,34,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 16px", overflowY: "auto", zIndex: 100 },
   modal: { width: "min(560px, 96vw)", background: "#fff", borderRadius: 18, boxShadow: "0 20px 60px rgba(11,26,34,0.3)", padding: 22, marginBottom: 40 },
-  modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 18, fontWeight: 800, marginBottom: 4 },
-  modalX: { width: 32, height: 32, borderRadius: 8, border: "none", background: "#F2F5F7", cursor: "pointer", fontSize: 20, lineHeight: 1, color: "#3A4750" },
-  modalHint: { fontSize: 13, color: "#5B6970", margin: "0 0 16px" },
-  campo: { marginBottom: 14 },
-  campoRow: { display: "flex", gap: 10, marginBottom: 14 },
-  campoLbl: { display: "block", fontSize: 12, fontWeight: 700, color: "#0B1A22", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" },
-  inputTime: { width: "100%", boxSizing: "border-box", padding: "9px 10px", border: "1px solid #D3DBDF", borderRadius: 9, fontSize: 14, fontFamily: "inherit" },
-  giornoChip: { minWidth: 42, height: 34, padding: "0 8px", borderRadius: 8, border: "1px solid #CFDDE3", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "#3A4750" },
-  giornoChipOn: { background: "#1E6E8C", color: "#fff", borderColor: "#1E6E8C" },
-  anteprima: { padding: "10px 12px", background: "#F4F8FA", border: "1px solid #E1EBEF", borderRadius: 10, fontSize: 13, color: "#0B4A5E", marginBottom: 14 },
-};
-
-const globalCss = "\
-  * { -webkit-tap-highlight-color: transparent; }\
-  button:hover { filter: brightness(0.97); }\
-  button:active { transform: scale(0.98); }\
-  button:focus-visible { outline: 2px solid #1E6E8C; outline-offset: 2px; }\
-";
+  modalHead: { display: "flex", justifyContent: "space-betw
