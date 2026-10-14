@@ -176,6 +176,8 @@ export default function App() {
   const [presets, setPresets] = useState([]);       // [{nome, corsie:[...]}]
   const [nuovoPreset, setNuovoPreset] = useState(""); // nome in digitazione
   const fileRef = useRef(null);                        // input file per importazione
+  const [dragOrigine, setDragOrigine] = useState(null); // { fascia, corsia } cella in trascinamento
+  const [dragSopra, setDragSopra] = useState(null);     // { fascia, corsia } cella sotto il dito/mouse
 
   const isAdmin = ruolo === "admin";
 
@@ -322,6 +324,60 @@ export default function App() {
     } catch (e) {
       setSincro("errore eliminazione");
       alert("Eliminazione non riuscita. Controlla la connessione a internet.");
+    }
+  };
+
+  // Sposta una prenotazione da (dateIso, fasciaDa, corsiaDa) a (fasciaA, corsiaA).
+  // Cambia corsia e/o orario; chiede conferma se la destinazione è occupata.
+  const spostaCella = async (dateIso, fasciaDa, corsiaDa, fasciaA, corsiaA) => {
+    if (!isAdmin) { alert("Solo l'amministratore può spostare le prenotazioni."); return; }
+    const idDa = keyOf(dateIso, fasciaDa, corsiaDa);
+    const idA = keyOf(dateIso, fasciaA, corsiaA);
+    if (idDa === idA) return;                       // stessa casella, niente da fare
+    const origine = dati[idDa];
+    if (!origine) return;                            // niente da spostare
+
+    // Se la destinazione è occupata, chiedi se sovrascrivere
+    if (dati[idA]) {
+      const ok = window.confirm("La casella di destinazione è già occupata.\nVuoi sovrascriverla?");
+      if (!ok) return;
+    }
+
+    // Calcolo il nuovo orario: se il blocco aveva un intervallo, lo traslo
+    // in base allo scostamento di fascia; altrimenti lascio invariato.
+    let nuovoInizio = origine.oraInizio || fasciaA;
+    let nuovoFine = origine.oraFine || "";
+    if (origine.oraInizio && origine.oraFine) {
+      const durataBlocco = hhmmToMin(origine.oraFine) - hhmmToMin(origine.oraInizio);
+      const nuovoIniMin = hhmmToMin(fasciaA);
+      const nuovoFinMin = Math.min(nuovoIniMin + durataBlocco, CHIUSURA);
+      nuovoInizio = fasciaA;
+      nuovoFine = String(Math.floor(nuovoFinMin/60)).padStart(2,"0") + ":" + String(nuovoFinMin%60).padStart(2,"0");
+    }
+
+    const nuovaRiga = {
+      id: idA, data_iso: dateIso, fascia: fasciaA, corsia: corsiaA,
+      tipo: origine.tipo, nota: origine.nota || "",
+      ora_inizio: nuovoInizio, ora_fine: nuovoFine, cliente: origine.cliente || "",
+    };
+
+    // Aggiorno subito la UI (tolgo origine, metto destinazione)
+    setDati((prev) => {
+      const n = { ...prev };
+      delete n[idDa];
+      n[idA] = rigaToCell(nuovaRiga);
+      return n;
+    });
+    setSincro("salvo…");
+    try {
+      await supabase.from("prenotazioni").delete().in("id", [idDa]);
+      const payload = { ...nuovaRiga, creato_da: ruolo, aggiornato_il: new Date().toISOString() };
+      const { error } = await supabase.from("prenotazioni").upsert(payload);
+      if (error) { setSincro("errore spostamento"); alert("Spostamento non riuscito: " + error.message); }
+      else setSincro("sincronizzato");
+    } catch (e) {
+      setSincro("errore spostamento");
+      alert("Spostamento non riuscito. Controlla la connessione a internet.");
     }
   };
 
@@ -731,7 +787,10 @@ export default function App() {
 
       {vista === "giorno" && (
         <VistaGiorno data={cursore} dati={dati} apri={apri} sel={sel} toggleCorsia={toggleCorsia}
-          fasce={FASCE} occ={occInData(iso(cursore))} tot={totGiorno} durata={durata} />
+          fasce={FASCE} occ={occInData(iso(cursore))} tot={totGiorno} durata={durata}
+          isAdmin={isAdmin} spostaCella={spostaCella}
+          dragOrigine={dragOrigine} setDragOrigine={setDragOrigine}
+          dragSopra={dragSopra} setDragSopra={setDragSopra} />
       )}
       {vista === "settimana" && (
         <VistaSettimana cursore={cursore} dati={dati} occInData={occInData}
@@ -1045,11 +1104,61 @@ export default function App() {
 }
 
 // ── Vista GIORNO ──────────────────────────────────────────────
-function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, durata }) {
+function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, durata,
+                      isAdmin, spostaCella, dragOrigine, setDragOrigine, dragSopra, setDragSopra }) {
   const dIso = iso(data);
   const perc = Math.round((occ / tot) * 100);
   // slot più fitti (durate brevi) → celle più basse
   const slotH = durata <= 15 ? 34 : durata <= 30 ? 44 : 52;
+
+  // Stato del trascinamento in corso (ref per non ridisegnare a ogni movimento)
+  const dragRef = useRef(null);  // { fascia, corsia, startX, startY, trascinando }
+  const appenaTrascinato = useRef(false);  // blocca il click subito dopo un drag
+
+  const puntoDaCoord = (x, y) => {
+    // Trova quale cella sta sotto le coordinate (per il rilascio)
+    const el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    const cellaEl = el.closest("[data-fascia][data-corsia]");
+    if (!cellaEl) return null;
+    return { fascia: cellaEl.getAttribute("data-fascia"), corsia: Number(cellaEl.getAttribute("data-corsia")) };
+  };
+
+  const onPointerDown = (e, f, c, occupata) => {
+    if (!isAdmin || !occupata) return;   // solo admin, solo celle occupate
+    dragRef.current = { fascia: f, corsia: c, startX: e.clientX, startY: e.clientY, trascinando: false };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = Math.abs(e.clientX - d.startX);
+    const dy = Math.abs(e.clientY - d.startY);
+    if (!d.trascinando && (dx > 8 || dy > 8)) {
+      d.trascinando = true;
+      setDragOrigine({ fascia: d.fascia, corsia: d.corsia });
+      try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (d.trascinando) {
+      e.preventDefault();
+      const p = puntoDaCoord(e.clientX, e.clientY);
+      setDragSopra(p);
+    }
+  };
+  const onPointerUp = (e) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d && d.trascinando) {
+      appenaTrascinato.current = true;              // evita che scatti il click
+      setTimeout(() => { appenaTrascinato.current = false; }, 50);
+      const p = puntoDaCoord(e.clientX, e.clientY);
+      setDragOrigine(null);
+      setDragSopra(null);
+      if (p && (p.fascia !== d.fascia || p.corsia !== d.corsia)) {
+        spostaCella(dIso, d.fascia, d.corsia, p.fascia, p.corsia);
+      }
+    }
+  };
+
   return (
     <>
       <div style={S.legenda}>
@@ -1062,7 +1171,12 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
           </span>
         ))}
       </div>
-      <div style={S.gridWrap}>
+      {isAdmin && (
+        <div style={{ fontSize: 12, color: "#5B6970", marginBottom: 8 }}>
+          Suggerimento: trascina una prenotazione su un'altra casella per spostarla di corsia o orario.
+        </div>
+      )}
+      <div style={S.gridWrap} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
         <table style={S.table}>
           <thead>
             <tr>
@@ -1080,10 +1194,17 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                   // pannello aperto sulla stessa fascia? il tap aggiunge/toglie la corsia
                   const stessaFascia = sel && sel.dateIso===dIso && sel.fascia===f;
                   const isSel = stessaFascia && sel.corsie.includes(c);
-                  const onTap = stessaFascia ? () => toggleCorsia(c) : () => apri(dIso, f, c);
+                  const onTap = () => {
+                    if (appenaTrascinato.current) return;   // ignora il click dopo un drag
+                    if (stessaFascia) toggleCorsia(c); else apri(dIso, f, c);
+                  };
+                  const inTrascinamento = dragOrigine && dragOrigine.fascia===f && dragOrigine.corsia===c;
+                  const eBersaglio = dragOrigine && dragSopra && dragSopra.fascia===f && dragSopra.corsia===c
+                                     && !(dragSopra.fascia===dragOrigine.fascia && dragSopra.corsia===dragOrigine.corsia);
                   return (
-                    <td key={c} style={S.td}>
+                    <td key={c} style={S.td} data-fascia={f} data-corsia={c}>
                       <button onClick={onTap}
+                        onPointerDown={(e) => onPointerDown(e, f, c, !!cell)}
                         title={cell ? (
                           (cell.oraInizio ? cell.oraInizio + "–" + cell.oraFine + " · " : "") +
                           t.label +
@@ -1091,10 +1212,14 @@ function VistaGiorno({ data, dati, apri, sel, toggleCorsia, fasce, occ, tot, dur
                           (!isMultiplo(cell.tipo) && cell.nota ? " · " + cell.nota : "")
                         ) : "Libera"}
                         style={{ ...S.slot, height: slotH,
-                          background: t ? t.bg : "transparent",
+                          background: t ? t.bg : (eBersaglio ? "#E7F0EB" : "transparent"),
                           color: t ? t.ink : "#9AA4AD",
-                          borderColor: isSel ? "#0B1A22" : (t ? t.bg : "#D9DEE2"),
-                          boxShadow: isSel ? "0 0 0 2px #0B1A22" : "none" }}>
+                          borderColor: eBersaglio ? "#1D6F42" : (isSel ? "#0B1A22" : (t ? t.bg : "#D9DEE2")),
+                          borderStyle: eBersaglio ? "dashed" : "solid",
+                          opacity: inTrascinamento ? 0.4 : 1,
+                          boxShadow: isSel ? "0 0 0 2px #0B1A22" : "none",
+                          cursor: (isAdmin && cell) ? "grab" : "pointer",
+                          touchAction: (isAdmin && cell) ? "none" : "auto" }}>
                         {t ? (
                           <>
                             <span style={S.slotTop}>{isMultiplo(cell.tipo) ? etichettaPrivati(cell) : t.label}</span>
