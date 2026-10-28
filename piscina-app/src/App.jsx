@@ -99,6 +99,8 @@ function fasceCoperte(inizioMin, fineMin, durata, fasce) {
 const TIPI = {
   libero:   { label: "Nuoto libero",  bg: "#1E6E8C", ink: "#EAF6FA" },
   corso:    { label: "Corso",         bg: "#C7511F", ink: "#FCEDE4" },
+  allenamento: { label: "Allenamento", bg: "#3A4FA0", ink: "#E8EBF7" },
+  partita:  { label: "Partita",       bg: "#B23A2E", ink: "#FBE8E5" },
   agonismo: { label: "Agonismo",      bg: "#3B5E22", ink: "#EDF4E4" },
   paralimp: { label: "Paralimpico",   bg: "#0F5C63", ink: "#E4F3F4" },
   pallanuoto: { label: "Pallanuoto",  bg: "#A8322D", ink: "#F9E7E5" },
