@@ -702,10 +702,14 @@ export default function App() {
     (prog.dateExtra || []).forEach((ds) => {
       if (ds && !dateUsate.has(ds)) { dateUsate.add(ds); giorniConteggio++; }
     });
+    // Uso solo le corsie che esistono davvero in questa area (evita di salvare
+    // su una corsia inesistente, che poi non comparirebbe in griglia).
+    const corsieValide = prog.corsie.filter((c) => CORSIE.includes(c));
+    const corsieDaUsare = corsieValide.length ? corsieValide : [CORSIE[0]];
     const target = [];
     dateUsate.forEach((dIso) => {
       fasceInRange.forEach((f) => {
-        prog.corsie.forEach((c) => target.push(keyOf(areaId, dIso, f, c)));
+        corsieDaUsare.forEach((c) => target.push(keyOf(areaId, dIso, f, c)));
       });
     });
     return { target, fasceInRange, giorniConteggio };
@@ -858,7 +862,16 @@ export default function App() {
         <button onClick={() => setCursore(oggi())} style={S.oggi}>Oggi</button>
         <div style={S.backupBtns}>
           {isAdmin && (
-            <button onClick={() => setProgOpen(true)} style={S.progBtn}
+            <button onClick={() => {
+                // All'apertura, allineo le corsie della programmazione a quelle
+                // dell'area: con un solo spazio forzo [1]; altrimenti tengo solo
+                // le corsie che esistono davvero in questa area.
+                setProg((p) => {
+                  const valide = p.corsie.filter((c) => CORSIE.includes(c));
+                  return { ...p, corsie: (CORSIE.length === 1 ? [1] : (valide.length ? valide : [CORSIE[0]])) };
+                });
+                setProgOpen(true);
+              }} style={S.progBtn}
               title="Assegna corsie su più giorni e orari in una volta">
               ⟳ Programma
             </button>
