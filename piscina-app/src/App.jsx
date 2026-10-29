@@ -47,9 +47,9 @@ const AREE = {
   palestra: {
     id: "palestra",
     nome: "Palestra",
-    sottotitolo: "Gestione spazio",
-    spazi: [1],
-    etichettaSpazio: () => "Palestra",
+    sottotitolo: "Gestione spazi",
+    spazi: [1, 2],   // divisa in due metà per due società
+    etichettaSpazio: (c) => "Palestra " + c,
     pwdAdmin: "Palestramaster",
     pwdStaff: "Palestraslave",
     soloAdminModifica: true,   // lo staff entra solo in sola lettura
@@ -982,8 +982,8 @@ export default function App() {
               </div>
               <div style={S.corsieQuick}>
                 <button onClick={() => setProgCorsie(CORSIE)} style={S.quick}>Tutte</button>
-                <button onClick={() => setProgCorsie([1,2,3,4])} style={S.quick}>1–4</button>
-                <button onClick={() => setProgCorsie([5,6,7,8])} style={S.quick}>5–8</button>
+                {CORSIE.length > 2 && <button onClick={() => setProgCorsie([1,2,3,4])} style={S.quick}>1–4</button>}
+                {CORSIE.length > 2 && <button onClick={() => setProgCorsie([5,6,7,8])} style={S.quick}>5–8</button>}
                 {presets.map((p) => (
                   <button key={p.nome} onClick={() => setProgCorsie(p.corsie)} style={S.quick}
                     title={"Corsie " + p.corsie.join(", ")}>{p.nome}</button>
@@ -1108,11 +1108,11 @@ export default function App() {
               })}
             </div>
             <div style={S.corsieQuick}>
-              <button onClick={() => setCorsieSel(CORSIE)} style={S.quick}>Tutta la vasca</button>
-              <button onClick={() => setCorsieSel([1,2,3,4])} style={S.quick}>Corsie 1–4</button>
-              <button onClick={() => setCorsieSel([5,6,7,8])} style={S.quick}>Corsie 5–8</button>
-              <button onClick={() => setCorsieSel(CORSIE.filter((c)=>c%2!==0))} style={S.quick}>Dispari</button>
-              <button onClick={() => setCorsieSel(CORSIE.filter((c)=>c%2===0))} style={S.quick}>Pari</button>
+              <button onClick={() => setCorsieSel(CORSIE)} style={S.quick}>{CORSIE.length > 2 ? "Tutta la vasca" : "Entrambe"}</button>
+              {CORSIE.length > 2 && <button onClick={() => setCorsieSel([1,2,3,4])} style={S.quick}>Corsie 1–4</button>}
+              {CORSIE.length > 2 && <button onClick={() => setCorsieSel([5,6,7,8])} style={S.quick}>Corsie 5–8</button>}
+              {CORSIE.length > 2 && <button onClick={() => setCorsieSel(CORSIE.filter((c)=>c%2!==0))} style={S.quick}>Dispari</button>}
+              {CORSIE.length > 2 && <button onClick={() => setCorsieSel(CORSIE.filter((c)=>c%2===0))} style={S.quick}>Pari</button>}
               <button onClick={() => setCorsieSel(CORSIE.filter((c)=>!sel.corsie.includes(c)))} style={S.quickAlt}>Inverti</button>
             </div>
 
